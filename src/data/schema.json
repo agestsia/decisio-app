@@ -1,0 +1,19 @@
+{
+  "case_title": "Pemilihan Laptop Kerja 2024",
+  "criteria": [
+    { "id": "c1", "name": "Harga", "weight": 0.4 },
+    { "id": "c2", "name": "Performa", "weight": 0.6 }
+  ],
+  "alternatives": [
+    {
+      "id": "a1",
+      "name": "Laptop Profesional A",
+      "scores": { "c1": 8, "c2": 7 }
+    },
+    {
+      "id": "a2",
+      "name": "Laptop Ultrabook B",
+      "scores": { "c1": 6, "c2": 9 }
+    }
+  ]
+}
