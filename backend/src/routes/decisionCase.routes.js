@@ -9,5 +9,7 @@ router.get("/:id", auth, decisionCaseController.detail);
 // ✅ NEW
 router.get("/:id/scores", auth, decisionCaseController.scoreMatrix);
 router.get("/:id/results", auth, decisionCaseController.results);
+router.post("/:id/compute", auth, decisionCaseController.compute);
+
 
 module.exports = router;
