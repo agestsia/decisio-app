@@ -46,10 +46,7 @@ async function computeWSMForCase({ decisionCase }) {
     throw err;
   }
 
-  const totalWeight = decisionCase.criteria.reduce(
-    (sum, c) => sum + Number(c.weight || 0),
-    0
-  );
+  const totalWeight = decisionCase.criteria.reduce((sum, c) => sum + Number(c.weight || 0), 0);
 
   if (!nearlyEqual(totalWeight, 1)) {
     const err = new Error("Total weight must equal 1");
@@ -94,14 +91,11 @@ async function computeWSMForCase({ decisionCase }) {
   // stats per kriteria untuk normalisasi
   const critStats = {};
   for (const crit of decisionCase.criteria) {
-    const values = decisionCase.alternatives.map((alt) =>
-      scoreMap.get(`${alt.id}|${crit.id}`)
-    );
+    const values = decisionCase.alternatives.map((alt) => scoreMap.get(`${alt.id}|${crit.id}`));
     critStats[crit.id] = { min: Math.min(...values), max: Math.max(...values) };
   }
 
   // bikin scoresNormalized buat engine
-  // engine akan hitung Σ(normalizedValue * weight)
   const scoresNormalized = [];
   for (const alt of decisionCase.alternatives) {
     for (const crit of decisionCase.criteria) {
@@ -110,10 +104,8 @@ async function computeWSMForCase({ decisionCase }) {
 
       let normalized = 0;
       if (crit.type === "cost") {
-        // cost: makin kecil makin baik
         normalized = raw === 0 ? 0 : min / raw;
       } else {
-        // benefit: makin besar makin baik
         normalized = max === 0 ? 0 : raw / max;
       }
 
@@ -132,10 +124,7 @@ async function computeWSMForCase({ decisionCase }) {
     scores: scoresNormalized,
   });
 
-  // bikin breakdown detail + ambil totalScore dari engine
-  const totalScoreMap = new Map(
-    rankingRaw.map((r) => [r.alternativeId, r.totalScore])
-  );
+  const totalScoreMap = new Map(rankingRaw.map((r) => [r.alternativeId, r.totalScore]));
 
   const computed = decisionCase.alternatives.map((alt) => {
     const breakdown = decisionCase.criteria.map((crit) => {
@@ -174,6 +163,31 @@ async function computeWSMForCase({ decisionCase }) {
   const ranked = computed.map((r, idx) => ({ ...r, rank: idx + 1 }));
 
   return { totalWeight, results: ranked };
+}
+
+/**
+ * Helper: simpan snapshot hasil compute ke DB
+ */
+async function persistDecisionResult({ userId, decisionCaseId, totalWeight, results }) {
+  const saved = await prisma.decisionResult.create({
+    data: {
+      userId,
+      decisionCaseId,
+      method: "WSM",
+      totalWeight,
+      items: {
+        create: results.map((r) => ({
+          alternativeId: r.alternativeId,
+          rank: r.rank,
+          totalScore: r.totalScore,
+          breakdown: r.breakdown, // Json
+        })),
+      },
+    },
+    select: { id: true, createdAt: true },
+  });
+
+  return saved;
 }
 
 // POST /decision-cases
@@ -316,7 +330,7 @@ async function scoreMatrix(req, res) {
   }
 }
 
-// POST /decision-cases/:id/compute
+// POST /decision-cases/:id/compute (HITUNG + SIMPAN)
 async function compute(req, res) {
   try {
     const { id } = req.params;
@@ -332,12 +346,21 @@ async function compute(req, res) {
 
     const { totalWeight, results } = await computeWSMForCase({ decisionCase });
 
+    const saved = await persistDecisionResult({
+      userId: req.user.id,
+      decisionCaseId: decisionCase.id,
+      totalWeight,
+      results,
+    });
+
     return res.status(200).json({
       message: "WSM computed successfully",
       data: {
         decisionCaseId: decisionCase.id,
         totalWeight,
         results,
+        savedResultId: saved.id,
+        savedAt: saved.createdAt,
       },
     });
   } catch (err) {
@@ -349,7 +372,7 @@ async function compute(req, res) {
   }
 }
 
-// GET /decision-cases/:id/results
+// GET /decision-cases/:id/results (hitung on-demand, tidak simpan)
 async function results(req, res) {
   try {
     const { id } = req.params;
@@ -382,6 +405,194 @@ async function results(req, res) {
   }
 }
 
+// GET /decision-cases/:id/results/latest (ringkas snapshot terbaru)
+async function latestResult(req, res) {
+  try {
+    const { id } = req.params;
+
+    // ownership check
+    const decisionCase = await prisma.decisionCase.findFirst({
+      where: { id, userId: req.user.id },
+      select: { id: true },
+    });
+
+    if (!decisionCase) {
+      return res.status(404).json({ message: "Decision case not found" });
+    }
+
+    const latest = await prisma.decisionResult.findFirst({
+      where: { decisionCaseId: id, userId: req.user.id },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        createdAt: true,
+        method: true,
+        totalWeight: true,
+        items: {
+          where: { rank: 1 },
+          take: 1,
+          select: {
+            rank: true,
+            totalScore: true,
+            alternative: { select: { id: true, name: true } },
+          },
+        },
+        _count: { select: { items: true } },
+      },
+    });
+
+    if (!latest) {
+      return res.status(404).json({ message: "No saved result yet" });
+    }
+
+    const top = latest.items?.[0] ?? null;
+
+    return res.status(200).json({
+      message: "Latest saved result fetched",
+      data: {
+        decisionCaseId: id,
+        result: {
+          id: latest.id,
+          createdAt: latest.createdAt,
+          method: latest.method,
+          totalWeight: latest.totalWeight,
+          itemCount: latest._count.items,
+          top1: top
+            ? {
+                alternativeId: top.alternative.id,
+                alternativeName: top.alternative.name,
+                totalScore: top.totalScore,
+              }
+            : null,
+        },
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "internal server error" });
+  }
+}
+
+// GET /decision-cases/:id/history?limit=10&cursor=<decisionResultId>
+async function history(req, res) {
+  try {
+    const { id } = req.params;
+
+    // limit default 10, max 50
+    const limitRaw = Number(req.query.limit ?? 10);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 50) : 10;
+
+    const cursor = req.query.cursor ? String(req.query.cursor) : null;
+
+    // ownership check
+    const decisionCase = await prisma.decisionCase.findFirst({
+      where: { id, userId: req.user.id },
+      select: { id: true },
+    });
+
+    if (!decisionCase) {
+      return res.status(404).json({ message: "Decision case not found" });
+    }
+
+    // Ambil 1 lebih banyak untuk tahu hasMore
+    const rows = await prisma.decisionResult.findMany({
+      where: { decisionCaseId: id, userId: req.user.id },
+      orderBy: { createdAt: "desc" },
+      take: limit + 1,
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+      select: {
+        id: true,
+        createdAt: true,
+        method: true,
+        totalWeight: true,
+        items: {
+          where: { rank: 1 },
+          take: 1,
+          select: {
+            totalScore: true,
+            alternative: { select: { id: true, name: true } },
+          },
+        },
+        _count: { select: { items: true } },
+      },
+    });
+
+    const hasMore = rows.length > limit;
+    const sliced = hasMore ? rows.slice(0, limit) : rows;
+
+    const items = sliced.map((r) => {
+      const top = r.items?.[0] ?? null;
+      return {
+        id: r.id,
+        createdAt: r.createdAt,
+        method: r.method,
+        totalWeight: r.totalWeight,
+        itemCount: r._count.items,
+        top1: top
+          ? {
+              alternativeId: top.alternative.id,
+              alternativeName: top.alternative.name,
+              totalScore: top.totalScore,
+            }
+          : null,
+      };
+    });
+
+    const nextCursor = hasMore ? items[items.length - 1]?.id : null;
+
+    return res.status(200).json({
+      message: "Result history fetched",
+      data: {
+        decisionCaseId: id,
+        items,
+        nextCursor,
+        hasMore,
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "internal server error" });
+  }
+}
+
+// GET /decision-results/:resultId (detail lengkap 1 snapshot)
+// GET /decision-results/:resultId  (detail lengkap)
+async function resultDetail(req, res) {
+  try {
+    const { resultId } = req.params;
+
+    const result = await prisma.decisionResult.findUnique({
+      where: { id: resultId },
+      include: {
+        decisionCase: { select: { id: true, title: true } },
+        items: {
+          orderBy: { rank: "asc" },
+          include: {
+            alternative: { select: { id: true, name: true, note: true } },
+          },
+        },
+      },
+    });
+
+    if (!result) {
+      return res.status(404).json({ message: "Decision result not found" });
+    }
+
+    // ownership check (privacy: balikin 404 kalau bukan punya user)
+    if (result.userId !== req.user.id) {
+      return res.status(404).json({ message: "Decision result not found" });
+    }
+
+    return res.status(200).json({
+      message: "Decision result fetched",
+      data: result,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "internal server error" });
+  }
+}
+
 module.exports = {
   create,
   list,
@@ -389,4 +600,8 @@ module.exports = {
   scoreMatrix,
   results,
   compute,
+  history,
+  latestResult,
+  resultDetail,
 };
+

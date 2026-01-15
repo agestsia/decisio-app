@@ -1,0 +1,39 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: decisio-db
+    environment:
+      POSTGRES_USER: decisio
+      POSTGRES_PASSWORD: decisio
+      POSTGRES_DB: decisio
+    ports:
+      - "5434:5432"
+    volumes:
+      - decisio_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U decisio -d decisio"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: decisio-api
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://decisio:decisio@db:5432/decisio?schema=public
+      JWT_SECRET: supersecret_docker_change_me
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: sh -c "npx prisma migrate deploy && npm start"
+    restart: unless-stopped
+
+volumes:
+  decisio_db:

@@ -8,12 +8,13 @@ datasource db {
 }
 
 model User {
-  id            String         @id @default(uuid())
-  email         String         @unique
-  password      String
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  decisionCases DecisionCase[]
+  id              String           @id @default(uuid())
+  email           String           @unique
+  password        String
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  decisionCases   DecisionCase[]
+  decisionResults DecisionResult[]
 }
 
 model DecisionCase {
@@ -26,6 +27,8 @@ model DecisionCase {
   alternatives Alternative[]
   criteria     Criterion[]
   user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  results DecisionResult[]
 
   @@index([userId])
 }
@@ -54,6 +57,8 @@ model Alternative {
   decisionCase   DecisionCase       @relation(fields: [decisionCaseId], references: [id], onDelete: Cascade)
   scores         AlternativeScore[]
 
+  resultItems DecisionResultItem[]
+
   @@index([decisionCaseId])
 }
 
@@ -75,4 +80,37 @@ model AlternativeScore {
 enum CriterionType {
   benefit
   cost
+}
+
+model DecisionResult {
+  id             String   @id @default(uuid())
+  decisionCaseId String
+  userId         String
+  method         String   @default("WSM")
+  totalWeight    Float
+  createdAt      DateTime @default(now())
+
+  decisionCase DecisionCase @relation(fields: [decisionCaseId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  items DecisionResultItem[]
+
+  @@index([decisionCaseId])
+  @@index([userId])
+}
+
+model DecisionResultItem {
+  id               String   @id @default(uuid())
+  decisionResultId String
+  alternativeId    String
+  rank             Int
+  totalScore       Float
+  breakdown        Json
+  createdAt        DateTime @default(now())
+
+  decisionResult DecisionResult @relation(fields: [decisionResultId], references: [id], onDelete: Cascade)
+  alternative    Alternative    @relation(fields: [alternativeId], references: [id], onDelete: Cascade)
+
+  @@unique([decisionResultId, alternativeId])
+  @@index([decisionResultId])
 }
