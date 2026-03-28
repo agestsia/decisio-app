@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -13,69 +7,110 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  password  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  decisionCases DecisionCase[]
+  id              String           @id @default(uuid())
+  email           String           @unique
+  password        String
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  decisionCases   DecisionCase[]
+  decisionResults DecisionResult[]
 }
 
 model DecisionCase {
-  id          String   @id @default(uuid())
-  title       String
-  description String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  userId String
-  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  criteria     Criterion[]
+  id           String        @id @default(uuid())
+  title        String
+  description  String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  userId       String
   alternatives Alternative[]
+  criteria     Criterion[]
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  results DecisionResult[]
+
+  @@index([userId])
 }
 
 model Criterion {
-  id        String   @id @default(uuid())
-  name      String
-  weight    Float
-  type      String   @default("benefit")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
+  id             String             @id @default(uuid())
+  name           String
+  weight         Float
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
   decisionCaseId String
-  decisionCase   DecisionCase @relation(fields: [decisionCaseId], references: [id], onDelete: Cascade)
+  type           CriterionType      @default(benefit)
+  scores         AlternativeScore[]
+  decisionCase   DecisionCase       @relation(fields: [decisionCaseId], references: [id], onDelete: Cascade)
 
-  scores AlternativeScore[]
+  @@index([decisionCaseId])
 }
 
 model Alternative {
-  id        String   @id @default(uuid())
-  name      String
-  note      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
+  id             String             @id @default(uuid())
+  name           String
+  note           String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
   decisionCaseId String
-  decisionCase   DecisionCase @relation(fields: [decisionCaseId], references: [id], onDelete: Cascade)
+  decisionCase   DecisionCase       @relation(fields: [decisionCaseId], references: [id], onDelete: Cascade)
+  scores         AlternativeScore[]
 
-  scores AlternativeScore[]
+  resultItems DecisionResultItem[]
+
+  @@index([decisionCaseId])
 }
 
 model AlternativeScore {
-  id String @id @default(uuid())
-
-  value Float
-
+  id            String      @id @default(uuid())
+  value         Float
   alternativeId String
+  criterionId   String
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
   alternative   Alternative @relation(fields: [alternativeId], references: [id], onDelete: Cascade)
-
-  criterionId String
-  criterion   Criterion @relation(fields: [criterionId], references: [id], onDelete: Cascade)
+  criterion     Criterion   @relation(fields: [criterionId], references: [id], onDelete: Cascade)
 
   @@unique([alternativeId, criterionId])
+  @@index([criterionId])
+  @@index([alternativeId])
 }
 
+enum CriterionType {
+  benefit
+  cost
+}
+
+model DecisionResult {
+  id             String   @id @default(uuid())
+  decisionCaseId String
+  userId         String
+  method         String   @default("WSM")
+  totalWeight    Float
+  createdAt      DateTime @default(now())
+
+  decisionCase DecisionCase @relation(fields: [decisionCaseId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  items DecisionResultItem[]
+
+  @@index([decisionCaseId])
+  @@index([userId])
+}
+
+model DecisionResultItem {
+  id               String   @id @default(uuid())
+  decisionResultId String
+  alternativeId    String
+  rank             Int
+  totalScore       Float
+  breakdown        Json
+  createdAt        DateTime @default(now())
+
+  decisionResult DecisionResult @relation(fields: [decisionResultId], references: [id], onDelete: Cascade)
+  alternative    Alternative    @relation(fields: [alternativeId], references: [id], onDelete: Cascade)
+
+  @@unique([decisionResultId, alternativeId])
+  @@index([decisionResultId])
+}
